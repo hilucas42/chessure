@@ -46,8 +46,9 @@ app.get('/login', function(req,res){
 
 app.post('/login',function(req,res){
     req.session.username = req.body.username;
-    console.log(req.session.username);
-    res.end('done');
+    console.log('Logging in '+req.session.username);
+    res.cookie('username',req.session.username,{httpOnly:false});
+    res.redirect('/');
 });
 
 app.get('/play',function(req,res){
@@ -97,29 +98,226 @@ var wss = new ws.Server({
     server: server,
     verifyClient: function (info,done) {
         sessionParser(info.req,{},function() {
+            //console.log('Verifying client: '+info.req.session.username);
             done(info.req.session.username);
         });
     }
- });
+});
 
 wss.on('connection', function connection(ws,req) {
-    var s = req.session;
-    ws.on('message', function incoming(message) {
-        m = JSON.parse(message);
-        switch(m.type) {
-            case 'PING':
-                console.log('INFO: '+s.username+' sent a PING');
-                ws.send(JSON.stringify({type:'PONG'}));
+    // Associate the websocket with a session-logged user
+    ws.username = req.session.username;
+    // Save request information to retrieve the user session later, 
+    // since sessions may be stored outside the memory
+    ws.req = {
+        headers: { cookie: req.headers.cookie},
+        url: req.url,
+        _parsedUrl: req._parsedUrl
+    };
+    // Procedures to make components forget the websocket when he die
+    ws.forget = function() {
+        PubSub.unsubscribe(tokenPLAYER_MSGS);
+        PubSub.unsubscribe(tokenONLINE_LIST);
+        PubSub.unsubscribe(tokenTABLE_LIST);
+        PubSub.publish('WS_CLOSE', ws);
+    }
+    // Returns false and forget ws of state is not OPEN, or true otherwise
+    ws.isOpen = function() {
+        if(ws.readyState === ws.OPEN)
+            return true;
+        console.log('WARN: WSS: WebSocket closed wrong');
+        console.log(ws);
+        ws.forget();
+        return false;
+    }
+
+    // Tells the player environment controller that a new ws is open
+    PubSub.publish('WS_CONNECTION',ws);
+
+    // Subscribe websocket to receive messages to the player
+    var tokenPLAYER_MSGS = PubSub.subscribe(ws.username, (msg,data) => {
+        if(!ws.isOpen()) return;
+
+        switch(msg.split('.')[1]) {
+            case 'ONLINE_LIST':
+                ws.send(JSON.stringify({
+                    type: 'ONLINE_LIST',
+                    data: data
+                }));
+                break;
+            case 'INVITE':
+                console.log('WSS: refreshing invites of '+ws.username);
+                ws.send(JSON.stringify({
+                    type: 'INVITE',
+                    data: data
+                }));
                 break;
             default:
+                console.log('WARN: WSS: Unespected internal message received:');
+                console.log(msg);
         }
     });
 
-    ws.send(JSON.stringify({
-        type:'WELCOME',
-        text:'WebSocket connected. Welcome, '+s.username+'!'
-    }));
+    // Subscribe websocket to receive updates from the list of online players
+    var tokenONLINE_LIST = PubSub.subscribe('ONLINE_LIST', (msg,data) => {
+        if(!ws.isOpen()) return;
+        
+        ws.send(JSON.stringify({
+            type: 'ONLINE_LIST',
+            data: data
+        }));
+    });
+
+    // Subscribe websocket to receive updates from the list of active tables
+    var tokenTABLE_LIST = PubSub.subscribe('TABLE_LIST', (msg,data) => {
+        if(!ws.isOpen()) return;
+        
+        ws.send(JSON.stringify({
+            type: 'TABLE_LIST',
+            data: data
+        }));
+    });
+
+    ws.on('message', function incoming(message) {
+        m = JSON.parse(message);
+        switch(m.type) {
+            // Player environment messages
+            case 'INVITE':
+                console.log('INFO: WSS says:');
+                console.log('      '+ws.username+'sent an invite to '+m.receiver);
+                PubSub.publish('INVITE',{sender:ws.username,receiver:m.receiver});
+                break;
+            case 'ACCEPT':
+                PubSub.publish('ACCEPT',{sender:m.sender,receiver:ws.username});
+                break;
+            case 'REJECT':
+                PubSub.publish('REJECT',m.inviteId);
+                break;
+            // Debug messages
+            case 'PING':
+                console.log('INFO: '+ws.username+' sent a PING');
+                ws.send(JSON.stringify({type:'PONG'}));
+                break;
+            default:
+                console.log('WARN: WSS: Unespected external message received:');
+                console.log(m);
+        }
+    });
+
+    ws.on('close', function() {
+        console.log('INFO: WSS: Closing websocket...');
+        ws.forget();
+    });
 });
+
+/// Player environment controller definition
+////////////////////////////////////////////////////////////////////////////////
+// The player controller will handle general actions comming from the users that
+// are logged in, manage invitation, create new instances of the game and handle
+// any other kind of interaction between players
+var pec = new (function PeC() {
+    this.online = {};   // Store websockets open by online users
+    this.invites = {};  // Store a list of invitations
+
+    // Returns an array with the username of online users
+    PeC.prototype.listOnlineUsernames = function() {
+        return Object.keys(this.online);
+    }
+
+    PubSub.subscribe('WS_CONNECTION', (msg,ws) => {
+        //console.log('INFO: PeC says:');
+        if(this.online[ws.username]) {
+            this.online[ws.username].push(ws);
+            PubSub.publish(ws.username+'.ONLINE_LIST',Object.keys(this.online));
+        }
+        else {
+            this.online[ws.username] = [ws];
+            PubSub.publish('ONLINE_LIST',Object.keys(this.online));
+            //console.log('      Publish new online list:');
+            //console.log(Object.keys(this.online));
+        }
+        //console.log('      Online object is now:');
+        //console.log(this.online);
+    });
+
+    PubSub.subscribe('WS_CLOSE', (msg,ws) => {
+        //console.log('INFO: PeC says:');
+        if(!this.online[ws.username] || 
+            (index = this.online[ws.username].indexOf(ws)) === -1)
+            return;
+
+        this.online[ws.username].splice(index,1);
+        if(this.online[ws.username].length === 0) {
+            //console.log('      No websoctet: waiting for reconnection...')
+            setTimeout(() => {
+                if(this.online[ws.username].length === 0) {
+                    delete this.online[ws.username];
+                    PubSub.publish('ONLINE_LIST',Object.keys(this.online));
+                    //console.log('INFO: PeC says:');
+                    //console.log('      Publish new online list:');
+                    //console.log(Object.keys(this.online));
+                }
+            },1000);
+        }
+        //console.log('      Online object is now:');
+        //console.log(this.online);
+    });
+
+    PubSub.subscribe('INVITE', (msg, invite) => {
+        if(!this.invites[invite.receiver])
+            this.invites[invite.receiver] = {
+                [invite.sender]:((new Date()).getTime() + 60000)};
+        else
+            this.invites[invite.receiver][invite.sender] = 
+                                 (new Date()).getTime() + 60000;
+
+        PubSub.publish(invite.receiver+'.INVITE',
+            Object.keys(this.invites[invite.receiver]));
+    });
+
+    PubSub.subscribe('ACCEPT', (msg, invite) => {
+        if(this.invites[invite.receiver][invite.sender])
+            PubSub.publish('NEW_TABLE',invite);
+        console.log('PeC: '+invite.receiver+' accepted invite from '+invite.sender);
+    });
+
+    PubSub.subscribe('REJECT', (msg, inviteId) => {
+        // Not implemented
+    });
+
+    // Remove expired invitations
+    setInterval(() => {
+        Object.keys(this.invites).forEach(receiver => {
+            Object.keys(this.invites[receiver]).forEach(sender => {
+                if(this.invites[receiver][sender] < (new Date()).getTime())
+                {
+                    console.log('Will delete now...');
+                    delete this.invites[receiver][sender];
+                }
+            });
+            if(Object.keys(this.invites[receiver]).length === 0){
+                delete this.invites[receiver];
+                PubSub.publish(receiver+'.INVITE',[]);
+            }
+            else
+                PubSub.publish(receiver+'.INVITE',
+                    Object.keys(this.invites[receiver]));
+        });
+    },30000);
+})();
+
+/// Functions declaration
+////////////////////////////////////////////////////////////////////////////////
+// Functions that will perform some tasks, when called above
+var IDmaker = function ID(prefix = '') {
+    this.idMaker = function*() {
+        var index = 0;
+        while(true) yield index++;
+    }();
+    ID.prototype.next = () => { 
+        return prefix+this.idMaker.next().value;
+    };
+}
 
 /// HTTP servers start up
 ////////////////////////////////////////////////////////////////////////////////
@@ -133,7 +331,3 @@ http.createServer(function(req,res){
 }).listen(3000,function() {
     console.log('Server http started on port 3000');
 });
-
-/// Functions declaration
-////////////////////////////////////////////////////////////////////////////////
-// Functions that will perform some tasks, when called above

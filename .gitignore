@@ -62,3 +62,6 @@ typings/
 
 # tls security files
 tls/*.pem
+
+# other
+*.tmp

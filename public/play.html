@@ -11,7 +11,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"></script>
     <script type="text/javascript" src="js/reconnecting-websocket.min.js"></script>
-    <script src="js/index.js"></script>
+    <script src="js/play.js"></script>
 </head>
 <body>
     <header>
@@ -23,12 +23,12 @@
         </button>
         <div class="collapse navbar-collapse" id="navbarCollapse">
           <ul class="navbar-nav mr-auto">
-            <li class="nav-item active">
-                <a class="nav-link" href="/">Home <span class="sr-only">(current)</span></a>
-              </li>
-              <li class="nav-item">
-                <a class="nav-link" href="/profile">Profile</a>
-              </li>
+            <li class="nav-item">
+              <a class="nav-link" href="/">Home <span class="sr-only">(current)</span></a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="/profile">Profile</a>
+            </li>
           </ul>
           <div class="dropdown">
             <button class="btn btn-secondary" type="button" id="dropdownMenu2" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
@@ -71,16 +71,24 @@
     <main role="main" class="container">
         <h1>Welcome to Chessure!</h1>
         <div class="row">
-          <div class="col-lg-5">
-            <p4 class="">Online players</p4>
-            <div class="accordion dynList" id="onlineList">
-
+          <div class="col-lg-4">
+            <p4 class="">A chat, maybe?</p4>
+            <div  id="possibleChat">
             </div>
           </div>
-          <div class="col-lg-5">
-            <p4 class="">Active tables</p4>
-            <div class="dynList" id="tableList">
-
+          <div class="col-lg-6">
+            <p4 id='playerColor'></p4>
+            <div id="chess">
+                <div id="table"></div>
+                <div id="info"></div>
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" placeholder="Move" id="move">
+                    <div class="input-group-append">
+                        <button class="btn btn-outline-secondary" type="button" id="movebtn">
+                          Move!
+                        </button>
+                    </div>
+                </div>
             </div>
           </div>
         </div>

@@ -46,13 +46,14 @@ app.get('/login', function(req,res){
 
 app.post('/login',function(req,res){
     req.session.username = req.body.username;
-    console.log('Logging in '+req.session.username);
+    console.log('APP: Logging in '+req.session.username);
     res.cookie('username',req.session.username,{httpOnly:false});
     res.redirect('/');
 });
 
 app.get('/play',function(req,res){
     if(req.session.username) {
+        req.session.table = req.query.table;
         res.sendFile('play.html',options);
     }
     else {
@@ -81,6 +82,10 @@ app.get('/logout',function(req,res){
 
 app.use(express.static(__dirname + '/public'));
 
+app.use(function(req, res) {
+    res.status(404).send('Sorry, can\'t find that!');
+});
+
 /// HTTP server definition
 ////////////////////////////////////////////////////////////////////////////////
 var server = https.createServer({
@@ -97,8 +102,9 @@ var server = https.createServer({
 var wss = new ws.Server({
     server: server,
     verifyClient: function (info,done) {
+        console.log('WSS: Going to verify client now...');
         sessionParser(info.req,{},function() {
-            //console.log('Verifying client: '+info.req.session.username);
+            console.log('WSS: Verifying client: '+info.req.session.username);
             done(info.req.session.username);
         });
     }
@@ -114,12 +120,24 @@ wss.on('connection', function connection(ws,req) {
         url: req.url,
         _parsedUrl: req._parsedUrl
     };
+    // If it is a ws open from the play page, then is must be linked to a table
+    if(req._parsedUrl.pathname === '/play') {
+        ws.table = req.session.table;
+        var tokenGAME_MSGS = PubSub.subscribe(ws.table,(msg,data) => {
+            ws.send(JSON.stringify({
+                type: msg.split('.')[1],
+                data: data
+            }));
+        });
+        console.log('WSS: WS linked to table '+ws.table);
+    }
     // Procedures to make components forget the websocket when he die
     ws.forget = function() {
         PubSub.unsubscribe(tokenPLAYER_MSGS);
         PubSub.unsubscribe(tokenONLINE_LIST);
         PubSub.unsubscribe(tokenTABLE_LIST);
-        PubSub.publish('WS_CLOSE', ws);
+        PubSub.unsubscribe(tokenGAME_MSGS);
+        PubSub.publish(ws.table?'WS_CLOSE.PLAY':'WS_CLOSE', ws);
     }
     // Returns false and forget ws of state is not OPEN, or true otherwise
     ws.isOpen = function() {
@@ -130,9 +148,6 @@ wss.on('connection', function connection(ws,req) {
         ws.forget();
         return false;
     }
-
-    // Tells the player environment controller that a new ws is open
-    PubSub.publish('WS_CONNECTION',ws);
 
     // Subscribe websocket to receive messages to the player
     var tokenPLAYER_MSGS = PubSub.subscribe(ws.username, (msg,data) => {
@@ -145,12 +160,36 @@ wss.on('connection', function connection(ws,req) {
                     data: data
                 }));
                 break;
+            case 'TABLE_LIST':
+                ws.send(JSON.stringify({
+                    type: 'TABLE_LIST',
+                    data:data
+                }));
             case 'INVITE':
-                console.log('WSS: refreshing invites of '+ws.username);
                 ws.send(JSON.stringify({
                     type: 'INVITE',
                     data: data
                 }));
+                break;
+            case 'NEW_TABLE':
+                console.log('WSS: notifying about new table to '+ws.username);
+                ws.send(JSON.stringify({
+                    type: 'NEW_TABLE',
+                    data: data
+                }));
+                break;
+            case 'REFRESH_TABLE':
+                console.log('WSS: Table refresh received');
+                ws.send(JSON.stringify({
+                    type: 'REFRESH_TABLE',
+                    data:data
+                }));
+                break;
+            case 'INVALID_MOVE':
+                ws.send(JSON.stringify({
+                    type:'INVALID_MOVE',
+                    data:data
+                }))
                 break;
             default:
                 console.log('WARN: WSS: Unespected internal message received:');
@@ -178,13 +217,14 @@ wss.on('connection', function connection(ws,req) {
         }));
     });
 
+    // Tells the player environment controller that a new ws is open
+    PubSub.publish('WS_CONNECTION',ws);
+
     ws.on('message', function incoming(message) {
         m = JSON.parse(message);
         switch(m.type) {
             // Player environment messages
             case 'INVITE':
-                console.log('INFO: WSS says:');
-                console.log('      '+ws.username+'sent an invite to '+m.receiver);
                 PubSub.publish('INVITE',{sender:ws.username,receiver:m.receiver});
                 break;
             case 'ACCEPT':
@@ -192,6 +232,13 @@ wss.on('connection', function connection(ws,req) {
                 break;
             case 'REJECT':
                 PubSub.publish('REJECT',m.inviteId);
+                break;
+            // Game messages
+            case 'MOVE':
+                PubSub.publish('MOVE',Object.assign(m.move,{
+                    player:ws.username,
+                    table:ws.table
+                }));
                 break;
             // Debug messages
             case 'PING':
@@ -205,7 +252,6 @@ wss.on('connection', function connection(ws,req) {
     });
 
     ws.on('close', function() {
-        console.log('INFO: WSS: Closing websocket...');
         ws.forget();
     });
 });
@@ -225,7 +271,6 @@ var pec = new (function PeC() {
     }
 
     PubSub.subscribe('WS_CONNECTION', (msg,ws) => {
-        //console.log('INFO: PeC says:');
         if(this.online[ws.username]) {
             this.online[ws.username].push(ws);
             PubSub.publish(ws.username+'.ONLINE_LIST',Object.keys(this.online));
@@ -233,34 +278,23 @@ var pec = new (function PeC() {
         else {
             this.online[ws.username] = [ws];
             PubSub.publish('ONLINE_LIST',Object.keys(this.online));
-            //console.log('      Publish new online list:');
-            //console.log(Object.keys(this.online));
         }
-        //console.log('      Online object is now:');
-        //console.log(this.online);
     });
 
     PubSub.subscribe('WS_CLOSE', (msg,ws) => {
-        //console.log('INFO: PeC says:');
         if(!this.online[ws.username] || 
             (index = this.online[ws.username].indexOf(ws)) === -1)
             return;
 
         this.online[ws.username].splice(index,1);
         if(this.online[ws.username].length === 0) {
-            //console.log('      No websoctet: waiting for reconnection...')
             setTimeout(() => {
                 if(this.online[ws.username].length === 0) {
                     delete this.online[ws.username];
                     PubSub.publish('ONLINE_LIST',Object.keys(this.online));
-                    //console.log('INFO: PeC says:');
-                    //console.log('      Publish new online list:');
-                    //console.log(Object.keys(this.online));
                 }
             },1000);
         }
-        //console.log('      Online object is now:');
-        //console.log(this.online);
     });
 
     PubSub.subscribe('INVITE', (msg, invite) => {
@@ -277,8 +311,7 @@ var pec = new (function PeC() {
 
     PubSub.subscribe('ACCEPT', (msg, invite) => {
         if(this.invites[invite.receiver][invite.sender])
-            PubSub.publish('NEW_TABLE',invite);
-        console.log('PeC: '+invite.receiver+' accepted invite from '+invite.sender);
+            PubSub.publish('NEW_GAME',invite);
     });
 
     PubSub.subscribe('REJECT', (msg, inviteId) => {
@@ -290,10 +323,7 @@ var pec = new (function PeC() {
         Object.keys(this.invites).forEach(receiver => {
             Object.keys(this.invites[receiver]).forEach(sender => {
                 if(this.invites[receiver][sender] < (new Date()).getTime())
-                {
-                    console.log('Will delete now...');
                     delete this.invites[receiver][sender];
-                }
             });
             if(Object.keys(this.invites[receiver]).length === 0){
                 delete this.invites[receiver];
@@ -318,6 +348,93 @@ var IDmaker = function ID(prefix = '') {
         return prefix+this.idMaker.next().value;
     };
 }
+
+/// Game controller definition
+////////////////////////////////////////////////////////////////////////////////
+// The game controller will create, handle and destroy all the game instances,
+// exchange messages with Websocket server, and save/retrieve game data to the
+// implemented storage service
+var chessctl = new (function ChessCtl() {
+    this.tables = {}; // Store tables been used
+    this.idMaker = new IDmaker('tbl_');
+
+    ChessCtl.prototype.getTableList = function() {
+        var list = [];
+        Object.keys(this.tables).forEach(tableId => {
+            list.push({
+                tableId: tableId,
+                w:this.tables[tableId].players.w,
+                b:this.tables[tableId].players.b
+            });
+        });
+        return list;
+    };
+
+    PubSub.subscribe('NEW_GAME', (msg,data) => {
+        var newTableMeta = {
+            id: this.idMaker.next(),
+            w: data.sender,
+            b: data.receiver
+        };
+        var newTable = new Chess();
+        newTable.players = {w:data.sender,b:data.receiver};
+        this.tables[newTableMeta.id] = newTable;
+
+        PubSub.publish(data.sender+'.NEW_TABLE',newTableMeta);
+        PubSub.publish(data.receiver+'.NEW_TABLE',newTableMeta);
+        PubSub.publish('TABLE_LIST',this.getTableList());
+    });
+
+    PubSub.subscribe('MOVE', (msg, data) => {
+        console.log('ChessCtl: Move received: ', data);
+        let table = this.tables[data.table];
+        if(table && data.player === table.players[table.turn()]) {
+            let move = table.move(data);
+            if(move)
+                PubSub.publish(data.table+'.REFRESH_TABLE', {
+                    move: move,
+                    fen: table.fen(),
+                    ascii: table.ascii()
+                });
+            else
+                PubSub.publish(data.player+'.INVALID_MOVE',table.ascii());
+        }
+    });
+
+    PubSub.subscribe('WS_CONNECTION', (msg,data) => {
+        let table = this.tables[data.table];
+        if(table) {
+            PubSub.publish(data.username+'.REFRESH_TABLE',{
+                fen:table.fen(),
+                ascii:table.ascii()
+            });
+            if(table.players.w === data.username && table.wTimeout)
+                clearTimeout(table.wTimeout);
+            else if(table.players.b === data.username && table.bTimeout)
+                clearTimeout(table.bTimeout);
+        }
+        else
+            PubSub.publish(data.username+'.TABLE_LIST',this.getTableList());
+    });
+
+    PubSub.subscribe('WS_CLOSE.PLAY', (msg,data) => {
+        if(table = this.tables[data.table])
+            if(table.players.w == data.username)
+                table.wTimeout = setTimeout(() => {
+                    PubSub.publish(data.table+'.TABLE_CLOSE', 'Player give up');
+                    delete table;
+                    delete this.tables[data.table];
+                    PubSub.publish('TABLE_LIST',this.getTableList());
+                }, 1000);
+            else if(table.players.b == data.username)
+                table.bTimeout = setTimeout(() => {
+                    PubSub.publish(data.table+'.TABLE_CLOSE', 'Player give up');
+                    delete table;
+                    delete this.tables[data.table];
+                    PubSub.publish('TABLE_LIST',this.getTableList());
+                }, 1000);
+    });
+})();
 
 /// HTTP servers start up
 ////////////////////////////////////////////////////////////////////////////////

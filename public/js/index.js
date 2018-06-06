@@ -7,8 +7,8 @@ function sendInvite(receiver) {
     }));
 }
 
-function watchTable(tableId) {
-    window.location.href = '/play?table='+tableId;
+function watchBoard(boardId) {
+    window.location.href = '/play?board='+boardId;
 }
 
 function acceptInvite(sender) {
@@ -35,35 +35,27 @@ window.addEventListener('load', function () {
         switch (message.type) {
             // Player environment messages
             case 'ONLINE_LIST':
-                console.log('Online list received: ');
-                console.log(message.data);
                 refreshOnlineList(message.data);
                 break;
 
             case 'INVITE':
-                console.log('Invite received: ');
-                console.log(message.data);
                 refreshInviteList(message.data);
                 break;
 
-            case 'TABLE_LIST':
-                console.log('Lista de tabuleiros recebida');
-                console.log(message.data);
-                refreshTableList(message.data);
+            case 'BOARD_LIST':
+                refreshBoardList(message.data);
                 break;
 
-            case 'NEW_TABLE':
-                let newTable = message.data;
-                console.log('Novo tabuleiro recebido');
-                console.log(message.data);
+            case 'BOARD_READY':
+                let redirectUrl = '/play?board='+message.data.id;
                 if(message.data.w === document.cookie.replace(/(?:(?:^|.*;\s*)username\s*\=\s*([^;]*).*$)|^.*$/, "$1"))
                     message.data.w = 'you';
                 else
                     message.data.b = 'you';
 
-                if(window.confirm('Table '+message.data.id+' ready.\nWhite: '+
+                if(window.confirm('Board '+message.data.id+' ready.\nWhite: '+
                         message.data.w+'\nBlack: '+message.data.b+'\n\nPlay?'))
-                    window.location.href = '/play?table='+message.data.id;
+                    window.location.href = redirectUrl;
                 break;
 
             // Debug 
@@ -104,21 +96,21 @@ window.addEventListener('load', function () {
         document.getElementById('onlineList').innerHTML = render;
     }
 
-    function refreshTableList(tableList) {
+    function refreshBoardList(boardList) {
         let render = '';
-        tableList.forEach(table => {
+        boardList.forEach(board => {
             render += '<div class="card">\
-<div class="card-header" id="h_'+table.tableId+'" onclick="$(\'#collapse_'+table.tableId+'\').collapse(\'toggle\')">\
+<div class="card-header" id="h_'+board.boardId+'" onclick="$(\'#collapse_'+board.boardId+'\').collapse(\'toggle\')">\
 <h5 class="mb-0">\
 <button class="btn btn-link collapsed" type="button" data-toggle="collapse" data-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">\
-White:'+table.w+' X Black: '+table.b+'\
+White:'+board.w+' X Black: '+board.b+'\
 </button></h5></div>\
-<div id="collapse_'+table.tableId+'" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionExample" style="">\
+<div id="collapse_'+board.boardId+'" class="collapse" aria-labelledby="headingTwo" data-parent="#accordionExample" style="">\
 <div class="card-body">\
-<button type="button" class="btn btn-light" onClick="watchTable(\''+table.tableId+'\')">Watch</button>\
+<button type="button" class="btn btn-light" onClick="watchBoard(\''+board.boardId+'\')">Watch</button>\
 </div></div></div>'
         });
-        document.getElementById('tableList').innerHTML = render;
+        document.getElementById('boardList').innerHTML = render;
     }
 
     function refreshInviteList(inviteList) {

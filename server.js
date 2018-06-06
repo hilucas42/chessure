@@ -53,7 +53,7 @@ app.post('/login',function(req,res){
 
 app.get('/play',function(req,res){
     if(req.session.username) {
-        req.session.table = req.query.table;
+        req.session.board = req.query.board;
         res.sendFile('play.html',options);
     }
     else {
@@ -120,24 +120,23 @@ wss.on('connection', function connection(ws,req) {
         url: req.url,
         _parsedUrl: req._parsedUrl
     };
-    // If it is a ws open from the play page, then is must be linked to a table
+    // If it is a ws open from the play page, then is must be linked to a board
     if(req._parsedUrl.pathname === '/play') {
-        ws.table = req.session.table;
-        var tokenGAME_MSGS = PubSub.subscribe(ws.table,(msg,data) => {
+        ws.board = req.session.board;
+        var tokenGAME_MSGS = PubSub.subscribe(ws.board,(msg,data) => {
             ws.send(JSON.stringify({
                 type: msg.split('.')[1],
                 data: data
             }));
         });
-        console.log('WSS: WS linked to table '+ws.table);
     }
     // Procedures to make components forget the websocket when he die
     ws.forget = function() {
         PubSub.unsubscribe(tokenPLAYER_MSGS);
         PubSub.unsubscribe(tokenONLINE_LIST);
-        PubSub.unsubscribe(tokenTABLE_LIST);
+        PubSub.unsubscribe(tokenBOARD_LIST);
         PubSub.unsubscribe(tokenGAME_MSGS);
-        PubSub.publish(ws.table?'WS_CLOSE.PLAY':'WS_CLOSE', ws);
+        PubSub.publish(ws.board?'WS_CLOSE.PLAY':'WS_CLOSE', ws);
     }
     // Returns false and forget ws of state is not OPEN, or true otherwise
     ws.isOpen = function() {
@@ -160,9 +159,9 @@ wss.on('connection', function connection(ws,req) {
                     data: data
                 }));
                 break;
-            case 'TABLE_LIST':
+            case 'BOARD_LIST':
                 ws.send(JSON.stringify({
-                    type: 'TABLE_LIST',
+                    type: 'BOARD_LIST',
                     data:data
                 }));
             case 'INVITE':
@@ -171,17 +170,15 @@ wss.on('connection', function connection(ws,req) {
                     data: data
                 }));
                 break;
-            case 'NEW_TABLE':
-                console.log('WSS: notifying about new table to '+ws.username);
+            case 'BOARD_READY':
                 ws.send(JSON.stringify({
-                    type: 'NEW_TABLE',
+                    type: 'BOARD_READY',
                     data: data
                 }));
                 break;
-            case 'REFRESH_TABLE':
-                console.log('WSS: Table refresh received');
+            case 'LOAD_BOARD':
                 ws.send(JSON.stringify({
-                    type: 'REFRESH_TABLE',
+                    type: 'LOAD_BOARD',
                     data:data
                 }));
                 break;
@@ -207,12 +204,12 @@ wss.on('connection', function connection(ws,req) {
         }));
     });
 
-    // Subscribe websocket to receive updates from the list of active tables
-    var tokenTABLE_LIST = PubSub.subscribe('TABLE_LIST', (msg,data) => {
+    // Subscribe websocket to receive updates from the list of active boards
+    var tokenBOARD_LIST = PubSub.subscribe('BOARD_LIST', (msg,data) => {
         if(!ws.isOpen()) return;
         
         ws.send(JSON.stringify({
-            type: 'TABLE_LIST',
+            type: 'BOARD_LIST',
             data: data
         }));
     });
@@ -237,7 +234,7 @@ wss.on('connection', function connection(ws,req) {
             case 'MOVE':
                 PubSub.publish('MOVE',Object.assign(m.move,{
                     player:ws.username,
-                    table:ws.table
+                    board:ws.board
                 }));
                 break;
             // Debug messages
@@ -355,83 +352,84 @@ var IDmaker = function ID(prefix = '') {
 // exchange messages with Websocket server, and save/retrieve game data to the
 // implemented storage service
 var chessctl = new (function ChessCtl() {
-    this.tables = {}; // Store tables been used
-    this.idMaker = new IDmaker('tbl_');
+    this.boards = {}; // Store boards been used
+    this.idMaker = new IDmaker('brd_');
 
-    ChessCtl.prototype.getTableList = function() {
+    ChessCtl.prototype.getBoardList = function() {
         var list = [];
-        Object.keys(this.tables).forEach(tableId => {
+        Object.keys(this.boards).forEach(boardId => {
             list.push({
-                tableId: tableId,
-                w:this.tables[tableId].players.w,
-                b:this.tables[tableId].players.b
+                boardId: boardId,
+                w:this.boards[boardId].players.w,
+                b:this.boards[boardId].players.b
             });
         });
         return list;
     };
 
     PubSub.subscribe('NEW_GAME', (msg,data) => {
-        var newTableMeta = {
+        var newBoardMeta = {
             id: this.idMaker.next(),
             w: data.sender,
             b: data.receiver
         };
-        var newTable = new Chess();
-        newTable.players = {w:data.sender,b:data.receiver};
-        this.tables[newTableMeta.id] = newTable;
+        var newBoard = new Chess();
+        newBoard.players = {w:data.sender,b:data.receiver};
+        this.boards[newBoardMeta.id] = newBoard;
 
-        PubSub.publish(data.sender+'.NEW_TABLE',newTableMeta);
-        PubSub.publish(data.receiver+'.NEW_TABLE',newTableMeta);
-        PubSub.publish('TABLE_LIST',this.getTableList());
+        PubSub.publish(data.sender+'.BOARD_READY',newBoardMeta);
+        PubSub.publish(data.receiver+'.BOARD_READY',newBoardMeta);
+        PubSub.publish('BOARD_LIST',this.getBoardList());
     });
 
     PubSub.subscribe('MOVE', (msg, data) => {
         console.log('ChessCtl: Move received: ', data);
-        let table = this.tables[data.table];
-        if(table && data.player === table.players[table.turn()]) {
-            let move = table.move(data);
+        let board = this.boards[data.board];
+        if(board && data.player === board.players[board.turn()]) {
+            let move = board.move(data);
             if(move)
-                PubSub.publish(data.table+'.REFRESH_TABLE', {
+                PubSub.publish(data.board+'.REFRESH_BOARD', {
                     move: move,
-                    fen: table.fen(),
-                    ascii: table.ascii()
+                    fen: board.fen(),
+                    ascii: board.ascii()
                 });
             else
-                PubSub.publish(data.player+'.INVALID_MOVE',table.ascii());
+                PubSub.publish(data.player+'.INVALID_MOVE',{fen:board.fen()});
         }
     });
 
     PubSub.subscribe('WS_CONNECTION', (msg,data) => {
-        let table = this.tables[data.table];
-        if(table) {
-            PubSub.publish(data.username+'.REFRESH_TABLE',{
-                fen:table.fen(),
-                ascii:table.ascii()
+        let board = this.boards[data.board];
+        if(board) {
+            PubSub.publish(data.username+'.LOAD_BOARD',{
+                fen:board.fen(),
+                ascii:board.ascii(),
+                players: board.players
             });
-            if(table.players.w === data.username && table.wTimeout)
-                clearTimeout(table.wTimeout);
-            else if(table.players.b === data.username && table.bTimeout)
-                clearTimeout(table.bTimeout);
+            if(board.players.w === data.username && board.wTimeout)
+                clearTimeout(board.wTimeout);
+            else if(board.players.b === data.username && board.bTimeout)
+                clearTimeout(board.bTimeout);
         }
         else
-            PubSub.publish(data.username+'.TABLE_LIST',this.getTableList());
+            PubSub.publish(data.username+'.BOARD_LIST',this.getBoardList());
     });
 
     PubSub.subscribe('WS_CLOSE.PLAY', (msg,data) => {
-        if(table = this.tables[data.table])
-            if(table.players.w == data.username)
-                table.wTimeout = setTimeout(() => {
-                    PubSub.publish(data.table+'.TABLE_CLOSE', 'Player give up');
-                    delete table;
-                    delete this.tables[data.table];
-                    PubSub.publish('TABLE_LIST',this.getTableList());
+        if(board = this.boards[data.board])
+            if(board.players.w == data.username)
+                board.wTimeout = setTimeout(() => {
+                    PubSub.publish(data.board+'.BOARD_CLOSE', 'Player give up');
+                    delete board;
+                    delete this.boards[data.board];
+                    PubSub.publish('BOARD_LIST',this.getBoardList());
                 }, 1000);
-            else if(table.players.b == data.username)
-                table.bTimeout = setTimeout(() => {
-                    PubSub.publish(data.table+'.TABLE_CLOSE', 'Player give up');
-                    delete table;
-                    delete this.tables[data.table];
-                    PubSub.publish('TABLE_LIST',this.getTableList());
+            else if(board.players.b == data.username)
+                board.bTimeout = setTimeout(() => {
+                    PubSub.publish(data.board+'.BOARD_CLOSE', 'Player give up');
+                    delete board;
+                    delete this.boards[data.board];
+                    PubSub.publish('BOARD_LIST',this.getBoardList());
                 }, 1000);
     });
 })();

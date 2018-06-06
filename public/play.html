@@ -6,11 +6,13 @@
     <title>Chessure</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.1/css/bootstrap.min.css">
-    <link rel="stylesheet" type="text/css" media="screen" href="css/main.css" />
+    <link rel="stylesheet" type="text/css" media="screen" href="css/chessboard.css"/>
+    <link rel="stylesheet" type="text/css" media="screen" href="css/main.css"/>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js"></script>
     <script type="text/javascript" src="js/reconnecting-websocket.min.js"></script>
+    <script type="text/javascript" src="js/chessboard.js"></script>
     <script src="js/play.js"></script>
 </head>
 <body>
@@ -79,16 +81,8 @@
           <div class="col-lg-6">
             <p4 id='playerColor'></p4>
             <div id="chess">
-                <div id="table"></div>
+                <div id="board"></div>
                 <div id="info"></div>
-                <div class="input-group mb-3">
-                    <input type="text" class="form-control" placeholder="Move" id="move">
-                    <div class="input-group-append">
-                        <button class="btn btn-outline-secondary" type="button" id="movebtn">
-                          Move!
-                        </button>
-                    </div>
-                </div>
             </div>
           </div>
         </div>
@@ -96,7 +90,7 @@
     
     <footer class="footer">
       <div class="container">
-        <span class="text-muted">Place sticky footer content here.</span>
+        <span class="text-muted">This site uses chess.js and chessboard.js.</span>
       </div>
     </footer>
 </body>

@@ -6,6 +6,8 @@ var chessure = (() => {
         chessure.username = document.cookie.replace(
             /(?:(?:^|.*;\s*)username\s*\=\s*([^;]*).*$)|^.*$/, "$1");
 
+        $('#dropdownMenu2').text(chessure.username);
+
         ws.onopen = function (e) {
             console.log(e.data);
             setTimeout(function () {

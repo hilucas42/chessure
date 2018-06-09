@@ -9,6 +9,7 @@ const session = require('express-session');
 const bodyParser = require('body-parser');
 const Chess = require('chess.js').Chess;
 
+var mongo = require('mongodb').MongoClient;
 var PubSub = require('pubsub-js');
 
 /// Session parser definition
@@ -28,10 +29,10 @@ const options = { root: __dirname+'/public/' };
 
 app.get('/',function(req,res){
     if(req.session.username) {
-        res.sendFile('index.html',options);
+        res.sendFile('lobby.html',options);
     }
     else {
-        res.redirect('/login');
+        res.sendFile('index.html',options);
     }
 });
 
@@ -44,11 +45,31 @@ app.get('/login', function(req,res){
     }
 });
 
-app.post('/login',function(req,res){
-    req.session.username = req.body.username;
-    console.log('APP: Logging in '+req.session.username);
-    res.cookie('username',req.session.username,{httpOnly:false});
-    res.redirect('/');
+app.post('/login',async function(req,res){
+    if(req.body['password-confirm']){
+        if(req.body.password === req.body['password-confirm']) {
+            if(await db.createUser(req.body.username, req.body.password)) {
+                req.session.username = req.body.username;
+                console.log('APP: Signing up '+req.session.username);
+                res.cookie('username',req.session.username,{httpOnly:false});
+                res.redirect('/');
+            }
+            else
+                res.redirect('/login?status=userExists');
+        }
+        else
+            res.redirect('/login?status=passNotEqual');
+    }
+    else {
+        if(await db.validateUser(req.body.username, req.body.password)) {
+            req.session.username = req.body.username;
+            console.log('APP: Logging in '+req.session.username);
+            res.cookie('username',req.session.username,{httpOnly:false});
+            res.redirect('/');
+        }
+        else
+            res.redirect('/login?status=credNotMatch');
+    }
 });
 
 app.get('/play',function(req,res){
@@ -63,8 +84,8 @@ app.get('/play',function(req,res){
 
 app.get('/profile',function(req,res){
     if(req.session.username) {
-        res.write('<h1>Hello '+req.session.username+'</h1>');
-        res.end('<a href="/logout">Logout</a>');
+        res.cookie('username',req.session.username,{httpOnly:false});
+        res.sendFile('profile.html',options);
     } else {
         res.redirect('/login');
     }
@@ -88,6 +109,9 @@ app.use(function(req, res) {
 
 /// HTTP server definition
 ////////////////////////////////////////////////////////////////////////////////
+// The HTTP server will receive HTTP requests and forward it to the WebServer or
+// to the WebSockts server. Create your own tls cert with the instructions found
+// at ./tls
 var server = https.createServer({
     passphrase: 'Hu3Hu3BR',
     key: fs.readFileSync(__dirname+'/tls/key.pem'),
@@ -432,6 +456,71 @@ var chessctl = new (function ChessCtl() {
                     PubSub.publish('BOARD_LIST',this.getBoardList());
                 }, 1000);
     });
+})();
+
+/// Database controller definition
+////////////////////////////////////////////////////////////////////////////////
+// The db controller will perform queries on the db server. Here is in use the
+// MongoDB server.
+var db = (function DataBaseCtl() {
+    const url = 'mongodb://localhost:27017/chessure';
+
+    return {
+        usernameAvailable: function(username) {
+            return new Promise(resolve => {
+                mongo.connect(url, function(err, cli) {
+                    if (err) throw err;
+                    var db = cli.db();
+                    db.collection('users').find({username}).toArray((err,result)=> {
+                        cli.close();
+                        if (err) throw err;
+                        if (result[0])
+                            resolve(false);
+                        else
+                            resolve(true);
+                    });
+                });
+            });
+        },
+        createUser: function(username, passhash) {
+            return new Promise(resolve => {
+                mongo.connect(url, function(err, cli) {
+                    if (err) throw err;
+                    var db = cli.db();
+                    db.collection('users').find({username}).toArray((err,result)=> {
+                        if (err) throw err;
+                        if (result[0]) {
+                            resolve(false);
+                            return;
+                        }
+                    });
+                    db.collection('users').insertOne({username,passhash},
+                            function(err, res) {
+                        cli.close();
+                        if (err) throw err;
+                        else resolve(true);
+                    });
+                });
+            });
+        },
+        validateUser: function(username, passhash) {
+            return new Promise(resolve => {
+                mongo.connect(url, function(err, cli) {
+                    if (err) throw err;
+                    var db = cli.db();
+                    db.collection('users').find({username}).toArray((err,result)=> {
+                        cli.close();
+                        if (err) throw err;
+                        else if(result[0] && result[0].passhash === passhash) {
+                            console.log(result[0].passhash, passhash);
+                            resolve(true);
+                        }
+                        else resolve(false);
+                    });
+                });
+            });
+        }
+    }
 })();
 
 /// HTTP servers start up

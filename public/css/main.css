@@ -1,6 +1,14 @@
+input {
+    margin-bottom: 10px;
+}
+
 .dynList {
     height: 400px;
     overflow: auto;
+}
+
+.form-signin, .form-signup {
+    padding: 0px 50px;
 }
 
 /* http://getbootstrap.com/docs/4.1/examples/sticky-footer-navbar/

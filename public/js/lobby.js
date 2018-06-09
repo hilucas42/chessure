@@ -21,6 +21,8 @@ function acceptInvite(sender) {
 window.addEventListener('load', function () {
     ws = new ReconnectingWebSocket('wss://' + document.domain + ':8080');
 
+    $('#dropdownMenu2').text(document.cookie.replace(/(?:(?:^|.*;\s*)username\s*\=\s*([^;]*).*$)|^.*$/, "$1"));
+
     ws.onopen = function (e) {
         console.log(e.data);
         setTimeout(function () {
@@ -114,6 +116,12 @@ White:'+board.w+' X Black: '+board.b+'\
     }
 
     function refreshInviteList(inviteList) {
+        if(inviteList.length > 0)
+            $('#dropdownInvites').html('Invites <span class="badge badge-pill\
+            badge-danger">'+inviteList.length+'</span>')
+        else
+            $('#dropdownInvites').text('Invites')
+
         let render = '';
         inviteList.forEach(sender => {
             render += '<button class="dropdown-item" type="button"\
